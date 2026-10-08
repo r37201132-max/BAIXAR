@@ -106,6 +106,34 @@
                     <p class="font-bold text-yellow-300"><i class="fas fa-info-circle mr-2"></i> O download começou!</p>
                     <p class="opacity-80">Se não iniciar, <span class="underline cursor-pointer" onclick="handleDownload(event)">clique aqui novamente</span>.</p>
                 </div>
+                
+                <div id="progress-container" class="hidden w-full max-w-md mt-6">
+                    <div class="flex justify-between text-xs text-white font-bold mb-2">
+                        <span>Baixando arquivo...</span>
+                        <span id="progress-text">0%</span>
+                    </div>
+                    <div class="w-full bg-slate-700 rounded-full h-3">
+                        <div id="progress-bar" class="bg-green-500 h-3 rounded-full transition-all duration-300 shadow-[0_0_10px_rgba(34,197,94,0.6)]" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <div id="post-download-guide" class="hidden mt-6 bg-yellow-400 text-blue-900 p-6 rounded-2xl w-full max-w-md shadow-xl border-2 border-yellow-300 animate-bounce">
+                    <h3 class="font-black text-xl mb-3 uppercase"><i class="fas fa-check-circle text-green-700 mr-2"></i> Download Concluído!</h3>
+                    <div class="text-left text-sm font-semibold space-y-3">
+                        <p class="bg-white/40 p-2 rounded-lg border border-yellow-500/30">
+                            <span class="bg-blue-900 text-white w-6 h-6 inline-flex justify-center items-center rounded-full mr-2">1</span>
+                            Toque no arquivo <strong>.apk</strong> que acabou de baixar (geralmente nas notificações ou pasta Downloads).
+                        </p>
+                        <p class="bg-white/40 p-2 rounded-lg border border-yellow-500/30">
+                            <span class="bg-blue-900 text-white w-6 h-6 inline-flex justify-center items-center rounded-full mr-2">2</span>
+                            Se o sistema pedir, clique em <strong>"Configurações"</strong> e ative <strong>"Permitir desta fonte"</strong>.
+                        </p>
+                        <p class="bg-white/40 p-2 rounded-lg border border-yellow-500/30">
+                            <span class="bg-blue-900 text-white w-6 h-6 inline-flex justify-center items-center rounded-full mr-2">3</span>
+                            Por fim, toque em <strong>"Instalar"</strong>.
+                        </p>
+                    </div>
+                </div>
 
                 <div class="grid grid-cols-3 gap-8 mt-12 text-blue-200 text-xs md:text-sm font-bold tracking-tight uppercase">
                     <div class="flex flex-col items-center gap-2">
@@ -219,31 +247,112 @@
         window.onload = function() {
             const links = document.querySelectorAll('.dl-link');
             links.forEach(link => {
-                link.setAttribute('href', DOWNLOAD_URL);
+                // Remove o href para forçar o uso exclusivo do onclick e evitar navegação acidental
+                link.removeAttribute('href'); 
             });
         };
 
-        function handleDownload(event) {
-            // Mostra feedback no botão principal
+        async function handleDownload(event) {
+            event.preventDefault();
+
+            // Elementos de UI
             const btnContent = document.getElementById('btn-content');
             const btnLoading = document.getElementById('btn-loading');
-            const downloadMsg = document.getElementById('download-message');
+            const progressContainer = document.getElementById('progress-container');
+            const progressBar = document.getElementById('progress-bar');
+            const progressText = document.getElementById('progress-text');
+            const postDownloadGuide = document.getElementById('post-download-guide');
+            const mainBtn = document.getElementById('main-download-btn');
             
-            if (btnContent && btnLoading) {
-                btnContent.classList.add('hidden');
-                btnLoading.classList.remove('hidden');
-                downloadMsg.classList.remove('hidden');
-                
-                setTimeout(() => {
-                    btnContent.classList.remove('hidden');
-                    btnLoading.classList.add('hidden');
-                }, 5000);
-            }
+            if (!btnContent || !btnLoading) return;
 
-            // Força o download
-            window.location.href = DOWNLOAD_URL;
-            event.preventDefault();
+            // Prepara a UI para o início do download
+            btnContent.classList.add('hidden');
+            btnLoading.classList.remove('hidden');
+            progressContainer.classList.remove('hidden');
+            postDownloadGuide.classList.add('hidden');
+            mainBtn.classList.remove('hover:scale-[1.02]'); // Tira o hover effect enquanto carrega
+            mainBtn.style.pointerEvents = 'none'; // Desabilita novos cliques
+
+            try {
+                const response = await fetch(DOWNLOAD_URL);
+                
+                if (!response.ok) throw new Error('Falha na rede');
+
+                const contentLength = response.headers.get('content-length');
+                if (!contentLength) {
+                     // Fallback caso o servidor não envie o tamanho do arquivo
+                     triggerDirectDownload();
+                     resetUI(btnContent, btnLoading, progressContainer, mainBtn, true);
+                     return;
+                }
+
+                const total = parseInt(contentLength, 10);
+                let loaded = 0;
+                
+                const reader = response.body.getReader();
+                const chunks = [];
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    
+                    if (done) break;
+                    
+                    chunks.push(value);
+                    loaded += value.length;
+                    
+                    const progress = Math.round((loaded / total) * 100);
+                    progressBar.style.width = `${progress}%`;
+                    progressText.innerText = `${progress}%`;
+                }
+
+                const blob = new Blob(chunks);
+                const url = window.URL.createObjectURL(blob);
+                
+                // Cria um link temporário para disparar o download do arquivo em memória
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                // Extrai o nome do arquivo da URL (decodificando para ler os emojis)
+                const filename = decodeURIComponent(DOWNLOAD_URL.split('/').pop()); 
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                
+                // Limpeza da memória
+                window.URL.revokeObjectURL(url);
+                a.remove();
+
+                // Oculta o botão de download e mostra as instruções de instalação
+                mainBtn.classList.add('hidden');
+                progressContainer.classList.add('hidden');
+                postDownloadGuide.classList.remove('hidden');
+
+            } catch (error) {
+                console.error('Erro no download via fetch:', error);
+                // Fallback de segurança: se o fetch falhar (ex: erro de CORS no github raw), vai para o método tradicional
+                triggerDirectDownload();
+                resetUI(btnContent, btnLoading, progressContainer, mainBtn, true);
+            }
+            
             return false;
+        }
+
+        // Função de fallback para o download direto padrão
+        function triggerDirectDownload() {
+            window.location.href = DOWNLOAD_URL;
+        }
+
+        // Restaura a interface se necessário (em caso de erro)
+        function resetUI(btnContent, btnLoading, progressContainer, mainBtn, showMessage) {
+            btnContent.classList.remove('hidden');
+            btnLoading.classList.add('hidden');
+            progressContainer.classList.add('hidden');
+            mainBtn.style.pointerEvents = 'auto';
+            if(showMessage) {
+                 const downloadMsg = document.getElementById('download-message');
+                 if(downloadMsg) downloadMsg.classList.remove('hidden');
+            }
         }
     </script>
 </body>
